@@ -393,7 +393,7 @@ def display_prediction_results(result, processing_time, original_image):
     
     with col2:
         st.subheader("🖼️ 원본 이미지")
-        st.image(original_image, caption="업로드된 MRI 이미지", use_column_width=True)
+        st.image(original_image, caption="업로드된 MRI 이미지", use_container_width=True)
 
 def main():
     """메인 앱"""
@@ -460,7 +460,7 @@ def main():
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             image = Image.open(uploaded_file)
-            st.image(image, caption="업로드된 이미지", use_column_width=True)
+            st.image(image, caption="업로드된 이미지", use_container_width=True)
         
         # 분석 버튼
         if st.button("🔍 AI 분석 시작", type="primary", use_container_width=True):
