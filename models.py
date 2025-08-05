@@ -22,7 +22,7 @@ class BrainMRIClassifier(nn.Module):
             )
         elif model_name == 'efficientnet':
             self.backbone = models.efficientnet_b0(pretrained=True)
-            self.backbone.features[0][0] = nn.Conv2d(MODEL_CONFIG['input_channels'], 32, kernel_size=3, stride=2, padding=1, bias=False)
+            self.backbone.features[0][0] = nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, bias=False)
             num_features = self.backbone.classifier[1].in_features
             self.backbone.classifier = nn.Identity()
             self.classifier = nn.Sequential(
