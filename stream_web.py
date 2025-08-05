@@ -67,33 +67,60 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 🔧 모델 로드 함수 수정 - ./models/ 경로 직접 사용
+@st.cache_resource
 def load_model():
-    """기존 brain_mri_classifier.py 파일의 모델 로드"""
+    """EC2/로컬 환경 모두 지원하는 모델 로더"""
     try:
         with st.spinner("🤖 AI 모델 로딩 중..."):
             # 현재 디렉토리 확인
             current_dir = os.getcwd()
             st.write(f"📁 현재 디렉토리: {current_dir}")
             
-            # models 폴더 확인
+            # 로컬 models 폴더 생성
             models_path = "./models/"
-            if os.path.exists(models_path):
-                files = os.listdir(models_path)
-                st.write(f"📂 models 폴더 파일들: {files}")
-                
-                # 필수 파일 확인
-                required_files = ["2class.pth", "plane_classifier.pth", "sagittal_classifier.pth", 
-                                "coronal_classifier.pth", "axial_classifier.pth"]
-                missing = [f for f in required_files if f not in files]
-                
-                if missing:
-                    st.error(f"❌ 누락된 모델 파일들: {missing}")
-                    return None, f"모델 파일 누락: {missing}"
+            os.makedirs(models_path, exist_ok=True)
+            
+            # 필수 모델 파일 목록
+            required_files = [
+                "2class.pth", 
+                "plane_classifier.pth", 
+                "sagittal_classifier.pth", 
+                "coronal_classifier.pth", 
+                "axial_classifier.pth"
+            ]
+            
+            # 로컬에 모든 파일이 있는지 확인
+            missing_files = []
+            for file_name in required_files:
+                local_path = os.path.join(models_path, file_name)
+                if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+                    missing_files.append(file_name)
                 else:
-                    st.write("✅ 모든 모델 파일 확인 완료")
-            else:
-                st.error(f"❌ models 폴더 없음: {models_path}")
-                return None, f"models 폴더 없음: {models_path}"
+                    file_size = os.path.getsize(local_path) / (1024 * 1024)
+                    st.write(f"✅ 로컬 파일: {file_name} ({file_size:.1f}MB)")
+            
+            # 누락된 파일이 있으면 S3에서 다운로드 시도
+            if missing_files:
+                st.write(f"📥 누락된 파일 {len(missing_files)}개를 S3에서 다운로드 시도...")
+                
+                success = download_models_from_s3(missing_files, models_path)
+                if not success:
+                    st.error("❌ S3에서 모델 다운로드 실패. 로컬 파일을 확인하거나 S3 설정을 점검하세요.")
+                    return None, "모델 파일 다운로드 실패"
+            
+            # 최종 파일 존재 확인
+            final_missing = []
+            for file_name in required_files:
+                local_path = os.path.join(models_path, file_name)
+                if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+                    final_missing.append(file_name)
+            
+            if final_missing:
+                st.error(f"❌ 모델 파일 누락: {final_missing}")
+                st.info("💡 해결 방법: 1) 로컬에 파일 복사 2) config.py에 S3 설정 3) AWS 자격증명 설정")
+                return None, f"모델 파일 누락: {final_missing}"
+            
+            st.write("✅ 모든 모델 파일 준비 완료")
             
             # 🎯 기존 파일의 함수 직접 사용
             st.write("🚀 create_brain_mri_classifier 함수 호출 중...")
@@ -112,6 +139,98 @@ def load_model():
         import traceback
         st.code(traceback.format_exc())
         return None, error_msg
+
+def download_models_from_s3(missing_files, models_path):
+    """S3에서 모델 파일 다운로드"""
+    try:
+        # 방법 1: config.py에서 설정 가져오기
+        try:
+            from config import S3_BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+            
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+                region_name=AWS_REGION
+            )
+            bucket_name = S3_BUCKET_NAME
+            st.write(f"✅ config.py에서 S3 설정 로드")
+            
+        except ImportError:
+            # 방법 2: 환경 변수에서 가져오기
+            bucket_name = os.environ.get('S3_BUCKET_NAME')
+            if not bucket_name:
+                st.warning("⚠️ S3 설정이 없습니다. 로컬 파일을 사용하거나 config.py/환경변수를 설정하세요.")
+                return False
+            
+            s3_client = boto3.client('s3')  # AWS CLI 설정 또는 IAM Role 사용
+            st.write(f"✅ 환경변수/AWS CLI에서 S3 설정 로드")
+        
+        # S3에서 파일 다운로드
+        for file_name in missing_files:
+            try:
+                # S3 키 경로 (실제 S3 구조에 맞게 수정)
+                s3_key = f"models/{file_name}"
+                local_path = os.path.join(models_path, file_name)
+                
+                st.write(f"⬇️ 다운로드: {s3_key}")
+                
+                # 다운로드 실행
+                s3_client.download_file(bucket_name, s3_key, local_path)
+                
+                # 파일 크기 확인
+                file_size = os.path.getsize(local_path) / (1024 * 1024)
+                st.write(f"✅ 완료: {file_name} ({file_size:.1f}MB)")
+                
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == 'NoSuchKey':
+                    st.error(f"❌ S3에 파일이 없음: {s3_key}")
+                elif error_code == 'NoSuchBucket':
+                    st.error(f"❌ S3 버킷이 없음: {bucket_name}")
+                else:
+                    st.error(f"❌ S3 오류: {str(e)}")
+                return False
+                
+            except Exception as e:
+                st.error(f"❌ 다운로드 실패: {file_name} - {str(e)}")
+                return False
+        
+        return True
+        
+    except NoCredentialsError:
+        st.error("❌ AWS 자격증명이 설정되지 않았습니다.")
+        st.info("💡 해결 방법: 1) aws configure 실행 2) config.py 설정 3) 환경변수 설정")
+        return False
+        
+    except Exception as e:
+        st.error(f"❌ S3 연결 실패: {str(e)}")
+        return False
+
+def get_s3_info():
+    """S3 설정 정보 표시 (디버깅용)"""
+    st.subheader("🔍 S3 설정 정보")
+    
+    # config.py 확인
+    try:
+        from config import S3_BUCKET_NAME
+        st.write(f"✅ config.py 버킷: {S3_BUCKET_NAME}")
+    except ImportError:
+        st.write("❌ config.py 없음")
+    
+    # 환경변수 확인
+    env_bucket = os.environ.get('S3_BUCKET_NAME')
+    if env_bucket:
+        st.write(f"✅ 환경변수 버킷: {env_bucket}")
+    else:
+        st.write("❌ 환경변수 S3_BUCKET_NAME 없음")
+    
+    # AWS 자격증명 확인
+    try:
+        boto3.client('s3')
+        st.write("✅ AWS 자격증명 설정됨")
+    except:
+        st.write("❌ AWS 자격증명 없음")
 
 # 나머지 함수들은 기존과 동일
 def get_prediction_color(prediction_result):
