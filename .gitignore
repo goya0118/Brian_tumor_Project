@@ -1,0 +1,18 @@
+# 🔒 보안 파일들
+config.py
+*.pem
+*key.pem
+.env
+.aws/
+*secret*
+*password*
+*token*
+
+# 🧠 모델 파일들
+*.pth
+*.pt
+*.pkl
+*.model
+models/*.pth
+models/*.pt
+*.pyc
